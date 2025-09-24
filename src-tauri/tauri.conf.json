@@ -23,12 +23,15 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' blob:; connect-src 'self' https://blob.handy.computer",
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["**"],
-          "requireLiteralLeadingDot": false
+          "allow": [
+            "dist/**",
+            "../resources/**"
+          ],
+          "requireLiteralLeadingDot": true
         }
       }
     }

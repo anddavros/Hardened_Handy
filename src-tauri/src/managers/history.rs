@@ -1,10 +1,10 @@
-use anyhow::Result;
+use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Local, Utc};
 use log::{debug, error};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{App, AppHandle, Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
 
@@ -234,46 +234,61 @@ impl HistoryManager {
         Ok(())
     }
 
-    pub fn get_audio_file_path(&self, file_name: &str) -> PathBuf {
-        self.recordings_dir.join(file_name)
+    fn resolve_history_path(&self, file_name: &str) -> Result<PathBuf> {
+        sanitize_history_path(&self.recordings_dir, file_name)
+    }
+
+    pub fn read_history_audio(&self, file_name: &str) -> Result<Vec<u8>> {
+        read_history_audio_from(&self.recordings_dir, file_name)
     }
 
     pub async fn get_entry_by_id(&self, id: i64) -> Result<Option<HistoryEntry>> {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text 
-             FROM transcription_history WHERE id = ?1"
+             FROM transcription_history WHERE id = ?1",
         )?;
-        
-        let entry = stmt.query_row([id], |row| {
-            Ok(HistoryEntry {
-                id: row.get("id")?,
-                file_name: row.get("file_name")?,
-                timestamp: row.get("timestamp")?,
-                saved: row.get("saved")?,
-                title: row.get("title")?,
-                transcription_text: row.get("transcription_text")?,
+
+        let entry = stmt
+            .query_row([id], |row| {
+                Ok(HistoryEntry {
+                    id: row.get("id")?,
+                    file_name: row.get("file_name")?,
+                    timestamp: row.get("timestamp")?,
+                    saved: row.get("saved")?,
+                    title: row.get("title")?,
+                    transcription_text: row.get("transcription_text")?,
+                })
             })
-        }).optional()?;
-        
+            .optional()?;
+
         Ok(entry)
     }
 
     pub async fn delete_entry(&self, id: i64) -> Result<()> {
         let conn = self.get_connection()?;
-        
+
         // Get the entry to find the file name
         if let Some(entry) = self.get_entry_by_id(id).await? {
             // Delete the audio file first
-            let file_path = self.get_audio_file_path(&entry.file_name);
-            if file_path.exists() {
-                if let Err(e) = fs::remove_file(&file_path) {
-                    error!("Failed to delete audio file {}: {}", entry.file_name, e);
-                    // Continue with database deletion even if file deletion fails
+            match self.resolve_history_path(&entry.file_name) {
+                Ok(file_path) => {
+                    if file_path.exists() {
+                        if let Err(e) = fs::remove_file(&file_path) {
+                            error!("Failed to delete audio file {}: {}", entry.file_name, e);
+                            // Continue with database deletion even if file deletion fails
+                        }
+                    }
+                }
+                Err(err) => {
+                    error!(
+                        "Refused to delete audio file for entry {} due to invalid path: {}",
+                        entry.id, err
+                    );
                 }
             }
         }
-        
+
         // Delete from database
         conn.execute(
             "DELETE FROM transcription_history WHERE id = ?1",
@@ -298,5 +313,74 @@ impl HistoryManager {
         } else {
             format!("Recording {}", timestamp)
         }
+    }
+}
+
+fn sanitize_history_path(recordings_dir: &Path, file_name: &str) -> Result<PathBuf> {
+    let clean_name = Path::new(file_name)
+        .file_name()
+        .ok_or_else(|| anyhow!("invalid history filename"))?;
+
+    let candidate = recordings_dir.join(clean_name);
+
+    if !candidate.starts_with(recordings_dir) {
+        bail!("history asset not found");
+    }
+
+    Ok(candidate)
+}
+
+fn read_history_audio_from(recordings_dir: &Path, file_name: &str) -> Result<Vec<u8>> {
+    let path = sanitize_history_path(recordings_dir, file_name)?;
+
+    if !path.exists() {
+        bail!("history asset not found");
+    }
+
+    fs::read(&path).with_context(|| format!("failed to read history file {:?}", path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn sanitize_history_path_allows_basename() -> Result<()> {
+        let dir = tempdir()?;
+        let path = sanitize_history_path(dir.path(), "sample.wav")?;
+
+        assert_eq!(path, dir.path().join("sample.wav"));
+        Ok(())
+    }
+
+    #[test]
+    fn sanitize_history_path_rejects_traversal() {
+        let dir = tempdir().expect("temp dir");
+        let result = sanitize_history_path(dir.path(), "../evil.wav");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_history_audio_from_returns_bytes() -> Result<()> {
+        let dir = tempdir()?;
+        let file_path = dir.path().join("audio.wav");
+        let expected = vec![0_u8, 1, 2, 3];
+        fs::write(&file_path, &expected)?;
+
+        let bytes = read_history_audio_from(dir.path(), "audio.wav")?;
+
+        assert_eq!(bytes, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn read_history_audio_from_missing_file_errors() {
+        let dir = tempdir().expect("temp dir");
+        let result = read_history_audio_from(dir.path(), "missing.wav");
+
+        assert!(result.is_err());
     }
 }

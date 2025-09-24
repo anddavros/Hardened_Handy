@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { SettingsGroup } from "../ui/SettingsGroup";
 import { AudioPlayer } from "../ui/AudioPlayer";
-import { ClipboardCopy, Star, Check, Trash2, Loader2 } from "lucide-react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { ClipboardCopy, Star, Check, Trash2 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 interface HistoryEntry {
@@ -71,18 +71,20 @@ export const HistorySettings: React.FC = () => {
     }
   };
 
-  const getAudioUrl = async (fileName: string) => {
+  const getAudioUrl = useCallback(async (fileName: string) => {
     try {
-      const filePath = await invoke<string>("get_audio_file_path", {
+      const bytes = await invoke<number[]>("stream_history_audio", {
         fileName,
       });
 
-      return convertFileSrc(`${filePath}`, "asset");
+      const buffer = new Uint8Array(bytes);
+      const blob = new Blob([buffer], { type: "audio/wav" });
+      return URL.createObjectURL(blob);
     } catch (error) {
-      console.error("Failed to get audio file path:", error);
+      console.error("Failed to load audio bytes:", error);
       return null;
     }
-  };
+  }, []);
 
   const deleteAudioEntry = async (id: number) => {
     try {
@@ -91,7 +93,7 @@ export const HistorySettings: React.FC = () => {
       console.error("Failed to delete audio entry:", error);
       throw error;
     }
-  }
+  };
 
   if (loading) {
     return (
@@ -154,11 +156,30 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   const [showCopied, setShowCopied] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
+    let objectUrl: string | null = null;
+
     const loadAudio = async () => {
       const url = await getAudioUrl(entry.file_name);
+      if (!isMounted) {
+        if (url) {
+          URL.revokeObjectURL(url);
+        }
+        return;
+      }
+
+      objectUrl = url;
       setAudioUrl(url);
     };
+
     loadAudio();
+
+    return () => {
+      isMounted = false;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
   }, [entry.file_name, getAudioUrl]);
 
   const handleCopyText = () => {

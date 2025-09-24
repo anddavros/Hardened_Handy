@@ -241,7 +241,7 @@ pub fn run() {
             commands::transcription::unload_model_manually,
             commands::history::get_history_entries,
             commands::history::toggle_history_entry_saved,
-            commands::history::get_audio_file_path,
+            commands::history::stream_history_audio,
             commands::history::delete_history_entry
         ])
         .run(tauri::generate_context!())

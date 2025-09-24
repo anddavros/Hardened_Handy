@@ -26,15 +26,14 @@ pub async fn toggle_history_entry_saved(
 }
 
 #[tauri::command]
-pub async fn get_audio_file_path(
+pub async fn stream_history_audio(
     _app: AppHandle,
     history_manager: State<'_, Arc<HistoryManager>>,
     file_name: String,
-) -> Result<String, String> {
-    let path = history_manager.get_audio_file_path(&file_name);
-    path.to_str()
-        .ok_or_else(|| "Invalid file path".to_string())
-        .map(|s| s.to_string())
+) -> Result<Vec<u8>, String> {
+    history_manager
+        .read_history_audio(&file_name)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
