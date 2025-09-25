@@ -317,12 +317,18 @@ impl HistoryManager {
 }
 
 fn sanitize_history_path(recordings_dir: &Path, file_name: &str) -> Result<PathBuf> {
+    // Ensure the filename is just a filename, not a path.
+    if Path::new(file_name).components().count() != 1 {
+        bail!("invalid history filename: must not contain path separators");
+    }
+
     let clean_name = Path::new(file_name)
         .file_name()
         .ok_or_else(|| anyhow!("invalid history filename"))?;
 
     let candidate = recordings_dir.join(clean_name);
 
+    // This check is technically redundant now, but it's good practice for defense-in-depth.
     if !candidate.starts_with(recordings_dir) {
         bail!("history asset not found");
     }

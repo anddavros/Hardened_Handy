@@ -20,9 +20,10 @@ pub enum OverlayPosition {
     Bottom,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelUnloadTimeout {
+    #[default]
     Never,
     Immediately,
     Min2,
@@ -31,12 +32,6 @@ pub enum ModelUnloadTimeout {
     Min15,
     Hour1,
     Sec5, // Debug mode only
-}
-
-impl Default for ModelUnloadTimeout {
-    fn default() -> Self {
-        ModelUnloadTimeout::Never
-    }
 }
 
 impl ModelUnloadTimeout {

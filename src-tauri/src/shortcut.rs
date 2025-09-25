@@ -94,7 +94,7 @@ pub fn change_binding(
 pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, String> {
     let binding = settings::get_stored_binding(&app, &id);
 
-    return change_binding(app, id, binding.default_binding);
+    change_binding(app, id, binding.default_binding)
 }
 
 #[tauri::command]
@@ -299,8 +299,7 @@ fn _register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), S
                         } else if event.state == ShortcutState::Released {
                             action.stop(ah, &binding_id_for_closure, &shortcut_string);
                         }
-                    } else {
-                        if event.state == ShortcutState::Pressed {
+                    } else if event.state == ShortcutState::Pressed {
                             let toggle_state_manager = ah.state::<ManagedToggleState>();
 
                             let mut states = toggle_state_manager.lock().expect("Failed to lock toggle state manager");
@@ -321,7 +320,6 @@ fn _register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), S
                                 *is_currently_active = true; // Update state to active
                             }
                         }
-                    }
                 } else {
                     println!(
                         "Warning: No action defined in ACTION_MAP for shortcut ID '{}'. Shortcut: '{}', State: {:?}",

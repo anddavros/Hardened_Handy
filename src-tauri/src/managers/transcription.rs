@@ -298,7 +298,7 @@ impl TranscriptionManager {
 
         println!("Audio vector length: {}", audio.len());
 
-        if audio.len() == 0 {
+        if audio.is_empty() {
             println!("Empty audio vector");
             return Ok(String::new());
         }
@@ -357,7 +357,6 @@ impl TranscriptionManager {
                 LoadedEngine::Parakeet(parakeet_engine) => {
                     let params = ParakeetInferenceParams {
                         timestamp_granularity: TimestampGranularity::Segment,
-                        ..Default::default()
                     };
 
                     parakeet_engine

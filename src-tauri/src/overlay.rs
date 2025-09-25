@@ -18,8 +18,7 @@ const OVERLAY_BOTTOM_OFFSET: f64 = 15.0;
 const OVERLAY_BOTTOM_OFFSET: f64 = 40.0;
 
 fn calculate_overlay_position(app_handle: &AppHandle) -> Option<(f64, f64)> {
-    if let Ok(monitors) = app_handle.primary_monitor() {
-        if let Some(monitor) = monitors {
+    if let Ok(Some(monitor)) = app_handle.primary_monitor() {
             let work_area = monitor.work_area();
             let scale = monitor.scale_factor();
             let work_area_width = work_area.size.width as f64 / scale;
@@ -40,7 +39,6 @@ fn calculate_overlay_position(app_handle: &AppHandle) -> Option<(f64, f64)> {
 
             return Some((x, y));
         }
-    }
     None
 }
 
