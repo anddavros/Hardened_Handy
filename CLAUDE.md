@@ -2,6 +2,31 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Status (Last Updated: 2025-09-25)
+
+### Security Hardening Progress
+**Phase 1 - History File Access Hardening: ✅ COMPLETED**
+- Implemented secure path sanitization for history audio files
+- Replaced direct file path exposure with secure byte streaming via IPC
+- Added restrictive CSP and narrowed asset protocol scope
+- Fixed all clippy warnings
+- Added unit tests for path sanitization (pending system library installation for full test execution)
+
+**Phase 2 - Model Download Security: 🔄 PENDING**
+- Model integrity verification with SHA-256 checksums
+- Safe tar extraction with path canonicalization
+- Download timeout and user-agent configuration
+
+**Phase 3 - Runtime Hardening: 🔄 PENDING**
+- Capability permissions audit
+- Clipboard operation hardening
+- Additional logging and monitoring
+
+**Phase 4 - Continuous Security: 🔄 PENDING**
+- CI/CD security pipeline setup
+- Automated dependency auditing
+- Security documentation
+
 ## Development Commands
 
 **Prerequisites:**
@@ -104,3 +129,22 @@ Settings are stored using Tauri's store plugin with reactive updates:
 ### Single Instance Architecture
 
 The app enforces single instance behavior - launching when already running brings the settings window to front rather than creating a new process.
+
+## Recent Changes (2025-09-24)
+
+### Security Improvements
+- **Path Traversal Protection**: Added `sanitize_history_path()` function with defense-in-depth validation including path component count check and canonicalization verification (src-tauri/src/managers/history.rs:320-335)
+- **Secure Audio Streaming**: Replaced direct file path exposure with `stream_history_audio` command that returns byte arrays instead of filesystem paths
+- **Frontend Blob Management**: Updated HistorySettings component to create scoped Blob URLs from streamed audio data with proper cleanup on unmount
+- **CSP Hardening**: Restored strict Content Security Policy limiting connections to self and blob.handy.computer only
+- **Asset Protocol Restriction**: Limited asset protocol scope to dist/** and resources/** directories with literal dot requirement
+
+### Code Quality
+- Fixed multiple clippy warnings across managers and overlay modules
+- Improved error handling patterns using idiomatic Rust constructs
+- Removed redundant default trait implementations in favor of derive macros
+
+### Testing Infrastructure
+- Added tempfile as dev dependency for isolated test fixtures
+- Implemented comprehensive unit tests for path sanitization logic
+- Note: Full test suite execution requires system libraries (libxi-dev, libx11-dev, libgtk-3-dev)

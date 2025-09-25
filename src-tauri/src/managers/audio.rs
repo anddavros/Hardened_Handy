@@ -64,7 +64,7 @@ impl AudioRecordingManager {
     /* ---------- construction ------------------------------------------------ */
 
     pub fn new(app: &App) -> Result<Self, anyhow::Error> {
-        let settings = get_settings(&app.handle());
+        let settings = get_settings(app.handle());
         let mode = if settings.always_on_microphone {
             MicrophoneMode::AlwaysOn
         } else {

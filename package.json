@@ -12,6 +12,7 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.0.2",
     "@tauri-apps/api": "^2.6.0",
+    "@tauri-apps/cli-linux-x64-gnu": "^2.8.4",
     "@tauri-apps/plugin-autostart": "~2",
     "@tauri-apps/plugin-clipboard-manager": "~2",
     "@tauri-apps/plugin-fs": "~2",

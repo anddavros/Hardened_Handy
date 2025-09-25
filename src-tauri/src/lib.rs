@@ -94,13 +94,13 @@ pub fn run() {
             // Apply macOS Accessory policy early if starting hidden
             #[cfg(target_os = "macos")]
             {
-                let settings = settings::get_settings(&app.handle());
+                let settings = settings::get_settings(app.handle());
                 if settings.start_hidden {
                     let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 }
             }
             // Get the current theme to set the appropriate initial icon
-            let initial_theme = tray::get_current_theme(&app.handle());
+            let initial_theme = tray::get_current_theme(app.handle());
 
             // Choose the appropriate initial icon based on theme
             let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle);
@@ -135,7 +135,7 @@ pub fn run() {
             app.manage(tray);
 
             // Initialize tray menu with idle state
-            utils::update_tray_menu(&app.handle(), &utils::TrayIconState::Idle);
+            utils::update_tray_menu(app.handle(), &utils::TrayIconState::Idle);
 
             // Get the autostart manager
             let autostart_manager = app.autolaunch();
@@ -144,26 +144,26 @@ pub fn run() {
 
             // Window is configured to start hidden to avoid flicker.
             // If user didn't choose Start Hidden, show it now.
-            let settings = settings::get_settings(&app.handle());
+            let settings = settings::get_settings(app.handle());
             if settings.start_hidden {
                 if let Some(main_window) = app.get_webview_window("main") {
                     let _ = main_window.hide();
                 }
             } else {
-                show_main_window(&app.handle());
+                show_main_window(app.handle());
             }
 
             let recording_manager = Arc::new(
                 AudioRecordingManager::new(app).expect("Failed to initialize recording manager"),
             );
             let model_manager =
-                Arc::new(ModelManager::new(&app).expect("Failed to initialize model manager"));
+                Arc::new(ModelManager::new(app).expect("Failed to initialize model manager"));
             let transcription_manager = Arc::new(
-                TranscriptionManager::new(&app, model_manager.clone())
+                TranscriptionManager::new(app, model_manager.clone())
                     .expect("Failed to initialize transcription manager"),
             );
             let history_manager =
-                Arc::new(HistoryManager::new(&app).expect("Failed to initialize history manager"));
+                Arc::new(HistoryManager::new(app).expect("Failed to initialize history manager"));
 
             // Add managers to Tauri's managed state
             app.manage(recording_manager.clone());
@@ -172,7 +172,7 @@ pub fn run() {
             app.manage(history_manager.clone());
 
             // Create the recording overlay window (hidden by default)
-            utils::create_recording_overlay(&app.handle());
+            utils::create_recording_overlay(app.handle());
 
             shortcut::init_shortcuts(app);
 
@@ -195,7 +195,7 @@ pub fn run() {
             tauri::WindowEvent::ThemeChanged(theme) => {
                 println!("Theme changed to: {:?}", theme);
                 // Update tray icon to match new theme, maintaining idle state
-                utils::change_tray_icon(&window.app_handle(), utils::TrayIconState::Idle);
+                utils::change_tray_icon(window.app_handle(), utils::TrayIconState::Idle);
             }
             _ => {}
         })
