@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Status (Last Updated: 2025-09-25)
+## Project Status (Last Updated: 2025-09-26)
 
 ### Security Hardening Progress
 **Phase 1 - History File Access Hardening: ✅ COMPLETED**
@@ -12,10 +12,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Fixed all clippy warnings
 - Added unit tests for path sanitization (pending system library installation for full test execution)
 
-**Phase 2 - Model Download Security: 🔄 PENDING**
-- Model integrity verification with SHA-256 checksums
-- Safe tar extraction with path canonicalization
-- Download timeout and user-agent configuration
+**Phase 2 - Model Download Security: ⚙️ IN PROGRESS**
+- Backend manifest loader + SHA-256 enforcement through `ModelManager`
+- Safe tar extraction with canonicalised paths and symlink rejection
+- Hardened HTTP client (timeouts, user-agent)
+- TODO: surface checksum/extraction failures to UI and replace placeholder manifest digests with real release data
 
 **Phase 3 - Runtime Hardening: 🔄 PENDING**
 - Capability permissions audit
