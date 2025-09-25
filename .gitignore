@@ -23,6 +23,35 @@ dist-ssr
 *.sln
 *.sw?
 
+# Build directories
 /target/
+/dist/
+/dist-ssr/
+src-tauri/target/
+
+# Dependencies
+node_modules/
+
+# Lock files (use bun consistently)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
+
+# Cargo cache
+.cargo-home/
+src-tauri/.cargo-home/
+
+# Temporary files
+.tmp/
+.claude/
 recording_*
 .crush/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Rust
+Cargo.lock
+src-tauri/Cargo.lock
