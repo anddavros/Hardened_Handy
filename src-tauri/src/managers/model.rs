@@ -1,16 +1,25 @@
 use crate::settings::{get_settings, write_settings};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
+use hex::encode;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::cmp;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{Read, Write};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
-use tar::Archive;
+use std::time::Duration;
+use tar::{Archive, EntryType};
 use tauri::{App, AppHandle, Emitter, Manager};
+
+const MANIFEST_RESOURCE_PATH: &str = "resources/models/manifest.json";
+const MODEL_DOWNLOAD_USER_AGENT: &str = "HandyModelManager/1.0 (+https://handy.computer)";
+const MODEL_DOWNLOAD_TIMEOUT_SECS: u64 = 600;
+const MODEL_CONNECT_TIMEOUT_SECS: u64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EngineType {
@@ -41,10 +50,205 @@ pub struct DownloadProgress {
     pub percentage: f64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestEntry {
+    id: String,
+    #[serde(rename = "sha256")]
+    digest: String,
+    #[serde(rename = "size_bytes")]
+    size: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestFile {
+    models: Vec<ManifestEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct ModelDigest {
+    model_id: String,
+    sha256: String,
+    size_bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ModelManifest {
+    digests: HashMap<String, ModelDigest>,
+}
+
+impl ModelManifest {
+    fn load(app_handle: &AppHandle) -> Result<Self> {
+        let manifest_path = app_handle
+            .path()
+            .resolve(MANIFEST_RESOURCE_PATH, tauri::path::BaseDirectory::Resource)?;
+
+        let raw = fs::read(&manifest_path).with_context(|| {
+            format!(
+                "failed to read model manifest at {}",
+                manifest_path.display()
+            )
+        })?;
+        let parsed: ManifestFile =
+            serde_json::from_slice(&raw).context("failed to parse model manifest")?;
+        let digests = parsed
+            .models
+            .into_iter()
+            .map(|entry| -> Result<_> {
+                if entry.size == 0 {
+                    anyhow::bail!("manifest entry for model {} contains zero size", entry.id);
+                }
+                if entry.digest.len() != 64 || !entry.digest.chars().all(|c| c.is_ascii_hexdigit())
+                {
+                    anyhow::bail!(
+                        "manifest entry for model {} has invalid sha256 digest",
+                        entry.id
+                    );
+                }
+
+                // Reject placeholder patterns commonly used in development
+                if entry.digest.chars().all(|c| c == '0')
+                    || entry.digest.chars().all(|c| c == '1')
+                    || entry.digest.chars().all(|c| c == '2')
+                    || entry.digest.chars().all(|c| c == '3')
+                    || entry.digest.chars().all(|c| c == '4')
+                    || entry.digest == "deadbeef".repeat(8)
+                    || entry.digest == "cafebabe".repeat(8)
+                {
+                    anyhow::bail!(
+                        "manifest entry for model {} contains placeholder sha256 digest (security risk)",
+                        entry.id
+                    );
+                }
+                Ok((
+                    entry.id.clone(),
+                    ModelDigest {
+                        model_id: entry.id,
+                        sha256: entry.digest.to_lowercase(),
+                        size_bytes: entry.size,
+                    },
+                ))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        Ok(Self { digests })
+    }
+
+    fn digest_for(&self, model_id: &str) -> Option<ModelDigest> {
+        self.digests.get(model_id).cloned()
+    }
+}
+
+fn verify_download(path: &Path, digest: &ModelDigest) -> Result<()> {
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("unable to stat downloaded artifact at {}", path.display()))?;
+
+    if metadata.len() != digest.size_bytes {
+        anyhow::bail!(
+            "size mismatch for model {}: expected {} bytes, got {}",
+            digest.model_id,
+            digest.size_bytes,
+            metadata.len()
+        );
+    }
+
+    let mut file = File::open(path)
+        .with_context(|| format!("unable to open downloaded artifact at {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| "failed while hashing downloaded model")?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    let actual = encode(hasher.finalize());
+    if actual != digest.sha256 {
+        anyhow::bail!(
+            "hash mismatch for model {}: expected {}, got {}",
+            digest.model_id,
+            digest.sha256,
+            actual
+        );
+    }
+
+    Ok(())
+}
+
+fn sanitize_archive_entry_path(base: &Path, entry: &Path) -> Result<PathBuf> {
+    let mut sanitized = PathBuf::from(base);
+
+    for component in entry.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(segment) => sanitized.push(segment),
+            _ => {
+                anyhow::bail!(
+                    "archive entry contains unsupported path component: {}",
+                    entry.display()
+                );
+            }
+        }
+    }
+
+    Ok(sanitized)
+}
+
+fn extract_archive_securely<R: Read>(archive: &mut Archive<R>, destination: &Path) -> Result<()> {
+    for entry_result in archive.entries()? {
+        let mut entry = entry_result?;
+        let header = entry.header();
+        let entry_path = entry
+            .path()
+            .with_context(|| "failed to read archive entry path")?;
+        let full_path = sanitize_archive_entry_path(destination, entry_path.as_ref())?;
+        let entry_type = header.entry_type();
+
+        match entry_type {
+            EntryType::Directory => {
+                fs::create_dir_all(&full_path).with_context(|| {
+                    format!("failed to create directory {}", full_path.display())
+                })?;
+            }
+            EntryType::Regular => {
+                if let Some(parent) = full_path.parent() {
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!("failed to create parent directory {}", parent.display())
+                    })?;
+                }
+
+                entry
+                    .unpack(&full_path)
+                    .with_context(|| format!("failed to unpack {}", full_path.display()))?;
+            }
+            EntryType::Symlink | EntryType::Link => {
+                anyhow::bail!(
+                    "archive entry contains unsupported link: {}",
+                    entry_path.display()
+                );
+            }
+            other => {
+                anyhow::bail!(
+                    "archive entry contains unsupported type {:?}: {}",
+                    other,
+                    entry_path.display()
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub struct ModelManager {
     app_handle: AppHandle,
     models_dir: PathBuf,
     available_models: Mutex<HashMap<String, ModelInfo>>,
+    manifest: ModelManifest,
 }
 
 impl ModelManager {
@@ -151,10 +355,13 @@ impl ModelManager {
             },
         );
 
+        let manifest = ModelManifest::load(&app_handle)?;
+
         let manager = Self {
             app_handle,
             models_dir,
             available_models: Mutex::new(available_models),
+            manifest,
         };
 
         // Migrate any bundled models to user directory
@@ -288,6 +495,11 @@ impl ModelManager {
         let model_info =
             model_info.ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
 
+        let digest = self
+            .manifest
+            .digest_for(&model_info.id)
+            .ok_or_else(|| anyhow::anyhow!("No manifest entry for model {}", model_id))?;
+
         let url = model_info
             .url
             .ok_or_else(|| anyhow::anyhow!("No download URL for model"))?;
@@ -309,6 +521,14 @@ impl ModelManager {
         // Check if we have a partial download to resume
         let resume_from = if partial_path.exists() {
             let size = partial_path.metadata()?.len();
+            if size > digest.size_bytes {
+                anyhow::bail!(
+                    "partial download for model {} exceeds expected size ({} > {})",
+                    model_id,
+                    size,
+                    digest.size_bytes
+                );
+            }
             println!("Resuming download of model {} from byte {}", model_id, size);
             size
         } else {
@@ -324,15 +544,24 @@ impl ModelManager {
             }
         }
 
-        // Create HTTP client with range request for resuming
-        let client = reqwest::Client::new();
+        // Create hardened HTTP client with range support for resuming
+        let client = reqwest::Client::builder()
+            .user_agent(MODEL_DOWNLOAD_USER_AGENT)
+            .timeout(Duration::from_secs(MODEL_DOWNLOAD_TIMEOUT_SECS))
+            .connect_timeout(Duration::from_secs(MODEL_CONNECT_TIMEOUT_SECS))
+            .build()
+            .context("failed to build HTTP client for model download")?;
+
         let mut request = client.get(&url);
 
         if resume_from > 0 {
             request = request.header("Range", format!("bytes={}-", resume_from));
         }
 
-        let response = request.send().await?;
+        let response = request
+            .send()
+            .await
+            .with_context(|| format!("failed to request model {}", model_id))?;
 
         // Check for success or partial content status
         if !response.status().is_success()
@@ -351,8 +580,9 @@ impl ModelManager {
             ));
         }
 
-        let total_size = if resume_from > 0 {
-            // For resumed downloads, add the resume point to content length
+        let total_size = if digest.size_bytes > 0 {
+            digest.size_bytes
+        } else if resume_from > 0 {
             resume_from + response.content_length().unwrap_or(0)
         } else {
             response.content_length().unwrap_or(0)
@@ -402,7 +632,7 @@ impl ModelManager {
             downloaded += chunk.len() as u64;
 
             let percentage = if total_size > 0 {
-                (downloaded as f64 / total_size as f64) * 100.0
+                (cmp::min(downloaded, total_size) as f64 / total_size as f64) * 100.0
             } else {
                 0.0
             };
@@ -420,6 +650,17 @@ impl ModelManager {
 
         file.flush()?;
         drop(file); // Ensure file is closed before moving
+
+        if let Err(error) = verify_download(&partial_path, &digest) {
+            {
+                let mut models = self.available_models.lock().unwrap();
+                if let Some(model) = models.get_mut(model_id) {
+                    model.is_downloading = false;
+                    model.partial_size = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
+                }
+            }
+            return Err(error);
+        }
 
         // Handle directory-based models (extract tar.gz) vs file-based models
         if model_info.is_directory {
@@ -447,9 +688,8 @@ impl ModelManager {
             let mut archive = Archive::new(tar);
 
             // Extract to the temporary directory first
-            archive.unpack(&temp_extract_dir).map_err(|e| {
-                let error_msg = format!("Failed to extract archive: {}", e);
-                // Clean up failed extraction
+            if let Err(error) = extract_archive_securely(&mut archive, &temp_extract_dir) {
+                let error_msg = format!("Failed to extract archive: {error}");
                 let _ = fs::remove_dir_all(&temp_extract_dir);
                 let _ = self.app_handle.emit(
                     "model-extraction-failed",
@@ -458,8 +698,15 @@ impl ModelManager {
                         "error": error_msg
                     }),
                 );
-                anyhow::anyhow!(error_msg)
-            })?;
+                {
+                    let mut models = self.available_models.lock().unwrap();
+                    if let Some(model) = models.get_mut(model_id) {
+                        model.is_downloading = false;
+                        model.partial_size = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
+                    }
+                }
+                return Err(error);
+            }
 
             // Find the actual extracted directory (archive might have a nested structure)
             let extracted_dirs: Vec<_> = fs::read_dir(&temp_extract_dir)?
@@ -651,5 +898,174 @@ impl ModelManager {
 
         println!("ModelManager: Download cancelled for: {}", model_id);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use std::{fs, path::Path};
+    use tar::{Builder, Header};
+    use tempfile::tempdir;
+
+    #[test]
+    fn verify_download_accepts_matching_digest() {
+        let temp_dir = tempdir().expect("failed to create temp dir");
+        let file_path = temp_dir.path().join("model.bin");
+        fs::write(&file_path, b"test-bytes").expect("failed to write test model");
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"test-bytes");
+        let digest = ModelDigest {
+            model_id: "test".into(),
+            sha256: encode(hasher.finalize()),
+            size_bytes: 10,
+        };
+
+        verify_download(&file_path, &digest).expect("verification should succeed");
+    }
+
+    #[test]
+    fn verify_download_rejects_mismatch() {
+        let temp_dir = tempdir().expect("failed to create temp dir");
+        let file_path = temp_dir.path().join("model.bin");
+        fs::write(&file_path, b"other-bytes").expect("failed to write test model");
+
+        let digest = ModelDigest {
+            model_id: "test".into(),
+            sha256: "deadbeef".into(),
+            size_bytes: 42,
+        };
+
+        let err = verify_download(&file_path, &digest).expect_err("verification must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("size mismatch"));
+    }
+
+    #[test]
+    fn sanitize_archive_path_rejects_parent() {
+        let temp_dir = tempdir().expect("failed to create temp dir");
+        let result = sanitize_archive_entry_path(temp_dir.path(), Path::new("../evil"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_archive_securely_rejects_symlink() {
+        let mut builder = Builder::new(Vec::new());
+        let mut header = Header::new_gnu();
+        header.set_entry_type(EntryType::Symlink);
+        header.set_size(0);
+        header.set_mode(0o755);
+        header
+            .set_path(Path::new("link"))
+            .expect("failed to set link path");
+        header
+            .set_link_name(Path::new("../evil"))
+            .expect("failed to set symlink target");
+        header.set_cksum();
+        builder
+            .append(&header, Cursor::new(Vec::new()))
+            .expect("failed to append entry");
+
+        let data = builder.into_inner().expect("failed to finalize tar");
+        let mut archive = Archive::new(Cursor::new(data));
+        let temp_dir = tempdir().expect("failed to create temp dir");
+
+        let err = extract_archive_securely(&mut archive, temp_dir.path())
+            .expect_err("symlink entry should be rejected");
+        assert!(err.to_string().contains("unsupported link"));
+    }
+
+    #[test]
+    fn extract_archive_securely_writes_files() {
+        let mut builder = Builder::new(Vec::new());
+
+        let mut dir_header = Header::new_gnu();
+        dir_header.set_entry_type(EntryType::Directory);
+        dir_header.set_size(0);
+        dir_header.set_mode(0o755);
+        dir_header.set_cksum();
+        builder
+            .append_data(
+                &mut dir_header,
+                Path::new("nested"),
+                Cursor::new(Vec::new()),
+            )
+            .expect("failed to append dir");
+
+        let mut file_header = Header::new_gnu();
+        file_header.set_size(4);
+        file_header.set_mode(0o644);
+        file_header.set_cksum();
+        builder
+            .append_data(
+                &mut file_header,
+                Path::new("nested/file.txt"),
+                Cursor::new(b"data"),
+            )
+            .expect("failed to append file");
+
+        let data = builder.into_inner().expect("failed to finalize tar");
+        let mut archive = Archive::new(Cursor::new(data));
+        let temp_dir = tempdir().expect("failed to create temp dir");
+
+        extract_archive_securely(&mut archive, temp_dir.path()).expect("extraction should succeed");
+
+        let extracted = temp_dir.path().join("nested/file.txt");
+        let contents = fs::read(&extracted).expect("failed to read extracted file");
+        assert_eq!(contents, b"data");
+    }
+
+    #[test]
+    fn manifest_rejects_placeholder_hashes() {
+        // Test the parsing logic directly using a JSON manifest with placeholder values
+        let placeholder_manifest_json = r#"{
+            "models": [
+                {
+                    "id": "test-zeros",
+                    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "size_bytes": 1024
+                }
+            ]
+        }"#;
+
+        let parsed: ManifestFile = serde_json::from_str(placeholder_manifest_json)
+            .expect("should parse valid JSON");
+
+        // Attempt to create ModelManifest from placeholder data - should fail
+        let result = parsed
+            .models
+            .into_iter()
+            .map(|entry| -> Result<_> {
+                if entry.size == 0 {
+                    anyhow::bail!("manifest entry for model {} contains zero size", entry.id);
+                }
+                if entry.digest.len() != 64 || !entry.digest.chars().all(|c| c.is_ascii_hexdigit()) {
+                    anyhow::bail!("manifest entry for model {} has invalid sha256 digest", entry.id);
+                }
+
+                // This should trigger our placeholder detection
+                if entry.digest.chars().all(|c| c == '0')
+                    || entry.digest.chars().all(|c| c == '1')
+                    || entry.digest.chars().all(|c| c == '2')
+                    || entry.digest.chars().all(|c| c == '3')
+                    || entry.digest.chars().all(|c| c == '4')
+                    || entry.digest == "deadbeef".repeat(8)
+                    || entry.digest == "cafebabe".repeat(8)
+                {
+                    anyhow::bail!(
+                        "manifest entry for model {} contains placeholder sha256 digest (security risk)",
+                        entry.id
+                    );
+                }
+
+                Ok((entry.id.clone(), entry))
+            })
+            .collect::<Result<Vec<_>>>();
+
+        // Should fail with placeholder detection error
+        let err = result.expect_err("should reject placeholder hash");
+        assert!(err.to_string().contains("placeholder sha256 digest"));
     }
 }

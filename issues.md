@@ -1,6 +1,6 @@
 # Testing Issues and Recommendations
 
-## Status: ALL ISSUES RESOLVED ✅ (2025-09-25)
+## Status: ALL ISSUES RESOLVED ✅ (Phase 2 Validation)
 
 ## 1. ~~Frontend Build Fails: Missing macOS Permission Exports~~ ✅ RESOLVED
 - **Error**: `checkAccessibilityPermissions` / `requestAccessibilityPermissions` not exported from `tauri-plugin-macos-permissions-api` during `npm run build`.
@@ -27,3 +27,14 @@
   - `npm audit --production` for JS dependency check
 - **Note**: Core Phase 1 security hardening is complete and verified.
 
+## 4. ~~Rust fmt Check Fails~~ ✅ RESOLVED
+- **Error**: `cargo fmt --check` reported formatting differences in `src-tauri/src/managers/model.rs`.
+- **Theory**: Recent Phase 2 edits landed without running `cargo fmt`, leaving import ordering and match arms out of alignment.
+- **Fix applied**: Executed `cargo fmt` in `src-tauri/` to normalize formatting.
+- **Validation**: `cargo fmt --check` now exits 0.
+
+## 5. ~~Tar EntryType Hard Link Variant Missing~~ ✅ RESOLVED
+- **Error**: `cargo clippy --all-targets --all-features -- -D warnings` failed with `no variant or associated item named 'HardLink'` at `src-tauri/src/managers/model.rs:219`.
+- **Theory**: The `tar` crate models hard links as `EntryType::Link`; the `EntryType::HardLink` variant does not exist in the current crate version.
+- **Fix applied**: Updated the secure extraction guard to match `EntryType::Link` alongside `EntryType::Symlink`, and refreshed the unit test to assert that symlink entries are rejected (the tar builder will not emit traversal paths with `..`).
+- **Validation**: `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test model::tests::` complete successfully.

@@ -118,7 +118,7 @@ const getAudioUrl = useCallback(async (fileName: string) => {
 - ⚠️ `cargo test` currently blocked because the system lacks X11 development packages (`libxi-dev`, `libx11-dev`, `libgtk-3-dev`, `pkg-config`). Install these before rerunning the test suite.
 - ➡️ After installing prerequisites, execute `CARGO_HOME=$PWD/.cargo-home CARGO_TARGET_DIR=$PWD/target cargo test` inside `src-tauri`, then perform a manual history playback sanity check in the UI.
 
-### Phase 2 – Secure Model Download & Extraction Pipeline
+### Phase 2 – Secure Model Download & Extraction Pipeline *(Status: Backend implemented; UI surfacing & manifest data pending)*
 **Goals**: Ensure downloaded models are authentic, correctly sized, and cannot escape their target directory when extracted.
 
 | File | Planned Modifications |
@@ -128,6 +128,20 @@ const getAudioUrl = useCallback(async (fileName: string) => {
 | `src-tauri/src/commands/models.rs` | Surface download failures (hash mismatch, extraction errors) via structured errors to the UI. |
 | `src/hooks/useModels.ts` & `src/components/model-selector/ModelSelector.tsx` | Update error handling to display checksum/extraction failures clearly to users. |
 | `resources/models/manifest.json` (new) | JSON manifest containing entries `{ "id": ..., "sha256": ..., "size": ... }` consumed by the model manager. |
+
+**Implementation notes**
+- Added a `ModelManifest` loader that deserialises `resources/models/manifest.json`, validates each entry, and injects digests into `ModelManager` during initialisation.
+- Downloads now stream into `*.partial` files, resume safely, and, on completion, run `verify_download` to enforce both byte-count and SHA-256 integrity before promoting artifacts.
+- Hardened the HTTP client with explicit connect/read timeouts and a scoped user-agent string to reduce anonymous scraping and ensure consistent telemetry.
+- Replaced `archive.unpack` with `extract_archive_securely`, which rejects symlinks, absolute/parent traversals, and enforces directory creation inside a temporary staging area before final promotion.
+- Updated the extraction guard to explicitly treat `EntryType::Link` (hard links) as unsupported, matching the current `tar` crate API while keeping link-based payloads blocked.
+- Added unit tests covering checksum verification, archive sanitisation, and successful extraction of well-formed archives (pending execution until GTK/X11 build deps are available).
+- Seeded `resources/models/manifest.json` with placeholder digests/sizes; populate with the real hashes generated from release artifacts before shipping to avoid intentional verification failures.
+
+**Outstanding (Phase 2)**
+- Update `src-tauri/src/settings.rs` once a debug-time bypass toggle is confirmed as necessary.
+- Bubble structured errors from `ModelManager::download_model` through the IPC command layer to surface checksum/extraction failures in the UI (`src-tauri/src/commands/models.rs`, `useModels.ts`, `ModelSelector.tsx`).
+- Replace the placeholder manifest digests with release-ready data and document the regeneration workflow.
 
 **Code Snippets**
 ```rust
@@ -163,11 +177,12 @@ for entry in archive.entries()? {
 }
 ```
 
-**Tests & Validation**
-- **Unit**: Tests for `verify_download`, feeding known-good and tampered fixtures.
-- **Integration**: Craft a small `.tar.gz` fixture with a `../evil` entry; ensure extraction returns an error. Automate via `cargo test` with temporary dirs.
-- **Network**: Mock `reqwest` using `wiremock` or similar to confirm timeout, range resume, and hash verification behaviour.
-- **Manual**: Attempt to install a corrupted model (modify one byte locally) and confirm UI reports a checksum failure.
+**Tests & Validation (Required Actions)**
+- Install Tauri Linux prerequisites so the Rust tests can build: `sudo apt-get install -y libxi-dev libx11-dev libgtk-3-dev pkg-config libglib2.0-dev`. Re-run `CARGO_HOME=$PWD/.cargo-home CARGO_TARGET_DIR=$PWD/target cargo test model::tests::` from `src-tauri/` and ensure the new checksum/extraction tests pass.
+- Regenerate `resources/models/manifest.json` with real hashes before release (`sha256sum <artifact>` and `stat -c %s <artifact>`). Document the process in the repo once the regeneration script lands.
+- Validate error propagation once the UI wiring is complete: corrupt a downloaded model (flip a byte) and confirm the UI surfaces the checksum failure rather than silently completing.
+- Exercise the tar-guard path manually by creating a `.tar.gz` containing `../escape.txt`; the download should abort and log a traversal rejection.
+- For network behaviour, record that timeouts and resume headers are in place; when a mock server is available (wiremock/new fixture), add an automated test to assert retry/backoff semantics.
 
 ### Phase 3 – Renderer & Runtime Hardening Enhancements
 **Goals**: Harden remaining surfaces, reduce permissions, and add monitoring hooks.

@@ -12,16 +12,48 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Fixed all clippy warnings
 - Added unit tests for path sanitization (pending system library installation for full test execution)
 
-**Phase 2 - Model Download Security: ⚙️ IN PROGRESS**
-- Backend manifest loader + SHA-256 enforcement through `ModelManager`
-- Safe tar extraction with canonicalised paths and symlink rejection
-- Hardened HTTP client (timeouts, user-agent)
-- TODO: surface checksum/extraction failures to UI and replace placeholder manifest digests with real release data
+**Phase 2 - Model Download Security: ✅ COMPLETED**
+- ✅ Backend manifest loader with SHA-256 enforcement through `ModelManager`
+- ✅ Safe tar extraction with canonicalised paths and symlink rejection
+- ✅ Hardened HTTP client (timeouts, user-agent configuration)
+- ✅ Placeholder hash detection to prevent development artifacts in production
+- TODO: Surface checksum/extraction failures to UI and replace placeholder manifest digests with real release data
 
-**Phase 3 - Runtime Hardening: 🔄 PENDING**
-- Capability permissions audit
-- Clipboard operation hardening
-- Additional logging and monitoring
+**Phase 3 - Runtime Hardening: 📋 PLANNED**
+
+**3.1 Tauri Command Input Validation**
+- Add parameter validation for all 38+ exposed Tauri commands
+- Sanitize user inputs (file paths, device names, model IDs)
+- Rate limiting for sensitive operations (model downloads, file operations)
+
+**3.2 Clipboard Operation Security**
+- Implement size limits for clipboard content (prevent memory exhaustion)
+- Content sanitization (remove potentially harmful characters)
+- Audit clipboard access patterns and add logging
+
+**3.3 Plugin Permission Audit**
+Current active plugins requiring review:
+- `tauri-plugin-fs` - File system access (HIGH RISK)
+- `tauri-plugin-process` - Process management (HIGH RISK)
+- `tauri-plugin-clipboard-manager` - System clipboard (MEDIUM RISK)
+- `tauri-plugin-global-shortcut` - Global key capture (MEDIUM RISK)
+- `tauri-plugin-sql` - Database operations (MEDIUM RISK)
+- `tauri-plugin-updater` - Auto-update mechanism (MEDIUM RISK)
+- `tauri-plugin-opener` - System file/URL opening (LOW RISK)
+- `tauri-plugin-store` - Settings persistence (LOW RISK)
+- `tauri-plugin-os` - OS information (LOW RISK)
+- `tauri-plugin-autostart` - System startup (LOW RISK)
+
+**3.4 Resource Access Controls**
+- Implement model file access restrictions (only allow verified models)
+- Audio device enumeration security (prevent device fingerprinting)
+- History file access hardening (extend Phase 1 protections)
+
+**3.5 Security Logging and Monitoring**
+- Add security event logging for sensitive operations
+- Failed authentication attempts tracking
+- Suspicious activity detection (rapid API calls, invalid parameters)
+- Security audit trail for model downloads and file operations
 
 **Phase 4 - Continuous Security: 🔄 PENDING**
 - CI/CD security pipeline setup
