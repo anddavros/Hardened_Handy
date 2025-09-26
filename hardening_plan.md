@@ -136,12 +136,11 @@ const getAudioUrl = useCallback(async (fileName: string) => {
 - Replaced `archive.unpack` with `extract_archive_securely`, which rejects symlinks, absolute/parent traversals, and enforces directory creation inside a temporary staging area before final promotion.
 - Updated the extraction guard to explicitly treat `EntryType::Link` (hard links) as unsupported, matching the current `tar` crate API while keeping link-based payloads blocked.
 - Added unit tests covering checksum verification, archive sanitisation, and successful extraction of well-formed archives (pending execution until GTK/X11 build deps are available).
-- Seeded `resources/models/manifest.json` with placeholder digests/sizes; populate with the real hashes generated from release artifacts before shipping to avoid intentional verification failures.
+- Populated `resources/models/manifest.json` with canonical CDN `content-length` values and SHA-256 digests (see `model_info.md` for the reference table and `generate_reference_hashes.sh` for the regeneration workflow recorded on 2025-09-26).
+- `download_model`, `delete_model`, and `cancel_download` now emit structured Tauri errors with machine-readable codes (`checksum_mismatch`, `archive_error`, etc.), which the React hooks/components surface to users.
 
 **Outstanding (Phase 2)**
 - Update `src-tauri/src/settings.rs` once a debug-time bypass toggle is confirmed as necessary.
-- Bubble structured errors from `ModelManager::download_model` through the IPC command layer to surface checksum/extraction failures in the UI (`src-tauri/src/commands/models.rs`, `useModels.ts`, `ModelSelector.tsx`).
-- Replace the placeholder manifest digests with release-ready data and document the regeneration workflow.
 
 **Code Snippets**
 ```rust
@@ -179,7 +178,7 @@ for entry in archive.entries()? {
 
 **Tests & Validation (Required Actions)**
 - Install Tauri Linux prerequisites so the Rust tests can build: `sudo apt-get install -y libxi-dev libx11-dev libgtk-3-dev pkg-config libglib2.0-dev`. Re-run `CARGO_HOME=$PWD/.cargo-home CARGO_TARGET_DIR=$PWD/target cargo test model::tests::` from `src-tauri/` and ensure the new checksum/extraction tests pass.
-- Regenerate `resources/models/manifest.json` with real hashes before release (`sha256sum <artifact>` and `stat -c %s <artifact>`). Document the process in the repo once the regeneration script lands.
+- When CDN artifacts change, rerun `generate_reference_hashes.sh` to refresh `resources/models/manifest.json` and capture the updated hashes in `model_info.md`.
 - Validate error propagation once the UI wiring is complete: corrupt a downloaded model (flip a byte) and confirm the UI surfaces the checksum failure rather than silently completing.
 - Exercise the tar-guard path manually by creating a `.tar.gz` containing `../escape.txt`; the download should abort and log a traversal rejection.
 - For network behaviour, record that timeouts and resume headers are in place; when a mock server is available (wiremock/new fixture), add an automated test to assert retry/backoff semantics.
@@ -189,10 +188,10 @@ for entry in archive.entries()? {
 
 | File | Planned Modifications |
 | ---- | --------------------- |
-| `src-tauri/capabilities/*.json` | Remove redundant or duplicated permissions (multiple `autostart`) and ensure only required capabilities remain. Consider moving history/model commands into a narrower capability if using Tauri v2 capability system. |
-| `src-tauri/src/lib.rs` | Add logging around denied operations and ensure `cancel_current_operation` covers new async flows.
-| `src-tauri/src/clipboard.rs` | Wrap clipboard writes in timeout/error handling to avoid leaking previous clipboard contents on failure.
-| `src-tauri/src/audio_toolkit/audio/recorder.rs` | Ensure `run_consumer` clears buffers on shutdown and logs VAD anomalies; optional but part of defence-in-depth.
+| `src-tauri/capabilities/*.json` | Remove redundant or duplicated permissions (multiple `autostart`) and ensure only required capabilities remain. Consider moving history/model commands into a narrower capability if using Tauri v2 capability system. *(Completed: duplicated entries removed; default scope limited to core/store/opener/resource read only).* |
+| `src-tauri/src/lib.rs` | Add logging around denied operations and ensure `cancel_current_operation` covers new async flows. *(Completed: cancellation routine now emits structured log output.)*
+| `src-tauri/src/clipboard.rs` | Wrap clipboard writes in timeout/error handling to avoid leaking previous clipboard contents on failure. *(Completed: clipboard restore now runs in a `finally` block with error logging.)*
+| `src-tauri/src/audio_toolkit/audio/recorder.rs` | Ensure `run_consumer` clears buffers on shutdown and logs VAD anomalies; optional but part of defence-in-depth. *(Completed: consumer resets buffered samples and VAD state on shutdown or channel close.)*
 | `README.md` / docs | Document new security assumptions (hash manifest, restricted asset protocol) for contributors.
 
 **Code Snippet**

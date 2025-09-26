@@ -5,6 +5,7 @@ import { ModelInfo } from "../../lib/types";
 import ModelStatusButton from "./ModelStatusButton";
 import ModelDropdown from "./ModelDropdown";
 import DownloadProgressDisplay from "./DownloadProgressDisplay";
+import { parseTauriError } from "../../lib/utils/tauriError";
 
 interface ModelStateEvent {
   event_type: string;
@@ -253,9 +254,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
         setModelStatus("none");
       }
     } catch (err) {
-      console.error("Failed to load current model:", err);
+      const parsed = parseTauriError(err, "Failed to check model status.");
+      console.error("Failed to load current model:", parsed);
       setModelStatus("error");
-      setModelError("Failed to check model status");
+      setModelError(parsed.message);
     }
   };
 
@@ -266,10 +268,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
       await invoke("set_active_model", { modelId });
       setCurrentModelId(modelId);
     } catch (err) {
-      const errorMsg = `${err}`;
-      setModelError(errorMsg);
+      const parsed = parseTauriError(err, "Failed to switch model.");
+      setModelError(parsed.message);
       setModelStatus("error");
-      onError?.(errorMsg);
+      onError?.(parsed.message);
     }
   };
 
@@ -278,10 +280,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
       setModelError(null);
       await invoke("download_model", { modelId });
     } catch (err) {
-      const errorMsg = `${err}`;
-      setModelError(errorMsg);
+      const parsed = parseTauriError(err, "Failed to download model.");
+      setModelError(parsed.message);
       setModelStatus("error");
-      onError?.(errorMsg);
+      onError?.(parsed.message);
     }
   };
 

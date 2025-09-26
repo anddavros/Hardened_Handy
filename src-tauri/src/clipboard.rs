@@ -2,6 +2,8 @@ use enigo::Enigo;
 use enigo::Key;
 use enigo::Keyboard;
 use enigo::Settings;
+use log::{error, warn};
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -40,25 +42,37 @@ fn send_paste() -> Result<(), String> {
 
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     let clipboard = app_handle.clipboard();
+    let original_content = clipboard.read_text().unwrap_or_default();
+    let start = Instant::now();
 
-    // get the current clipboard content
-    let clipboard_content = clipboard.read_text().unwrap_or_default();
+    let result = (|| {
+        clipboard
+            .write_text(&text)
+            .map_err(|e| format!("Failed to write to clipboard: {}", e))?;
 
-    clipboard
-        .write_text(&text)
-        .map_err(|e| format!("Failed to write to clipboard: {}", e))?;
+        std::thread::sleep(Duration::from_millis(40));
 
-    // small delay to ensure the clipboard content has been written to
-    std::thread::sleep(std::time::Duration::from_millis(50));
+        send_paste()?;
 
-    send_paste()?;
+        // Give the target application a moment to receive the paste event
+        std::thread::sleep(Duration::from_millis(40));
 
-    std::thread::sleep(std::time::Duration::from_millis(50));
+        Ok::<(), String>(())
+    })();
 
-    // restore the clipboard
-    clipboard
-        .write_text(&clipboard_content)
-        .map_err(|e| format!("Failed to restore clipboard: {}", e))?;
+    // Always attempt to restore the clipboard, even if paste failed
+    if let Err(err) = clipboard.write_text(&original_content) {
+        warn!("Failed to restore clipboard contents: {}", err);
+    }
+
+    if let Err(err) = result {
+        error!(
+            "Clipboard paste failed after {:?}: {}",
+            start.elapsed(),
+            err
+        );
+        return Err(err);
+    }
 
     Ok(())
 }

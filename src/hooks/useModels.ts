@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { parseTauriError } from "../lib/utils/tauriError";
 
 interface ModelInfo {
   id: string;
@@ -45,7 +46,9 @@ export const useModels = () => {
       setModels(modelList);
       setError(null);
     } catch (err) {
-      setError(`Failed to load models: ${err}`);
+      const parsed = parseTauriError(err, "Failed to load models.");
+      console.error("Failed to load models", parsed);
+      setError(parsed.message);
     } finally {
       setLoading(false);
     }
@@ -81,7 +84,9 @@ export const useModels = () => {
       setHasAnyModels(true);
       return true;
     } catch (err) {
-      setError(`Failed to switch to model: ${err}`);
+      const parsed = parseTauriError(err, "Failed to switch to model.");
+      console.error("Failed to switch model", parsed);
+      setError(parsed.message);
       return false;
     }
   };
@@ -93,7 +98,9 @@ export const useModels = () => {
       await invoke("download_model", { modelId });
       return true;
     } catch (err) {
-      setError(`Failed to download model: ${err}`);
+      const parsed = parseTauriError(err, "Failed to download model.");
+      console.error("Model download failed", parsed);
+      setError(parsed.message);
       setDownloadingModels((prev) => {
         const next = new Set(prev);
         next.delete(modelId);
@@ -110,7 +117,9 @@ export const useModels = () => {
       await loadModels(); // Refresh the list
       return true;
     } catch (err) {
-      setError(`Failed to delete model: ${err}`);
+      const parsed = parseTauriError(err, "Failed to delete model.");
+      console.error("Failed to delete model", parsed);
+      setError(parsed.message);
       return false;
     }
   };

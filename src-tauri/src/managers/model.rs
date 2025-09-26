@@ -1030,8 +1030,8 @@ mod tests {
             ]
         }"#;
 
-        let parsed: ManifestFile = serde_json::from_str(placeholder_manifest_json)
-            .expect("should parse valid JSON");
+        let parsed: ManifestFile =
+            serde_json::from_str(placeholder_manifest_json).expect("should parse valid JSON");
 
         // Attempt to create ModelManifest from placeholder data - should fail
         let result = parsed

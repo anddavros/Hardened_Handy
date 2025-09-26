@@ -304,8 +304,21 @@ fn run_consumer(
 
                     let _ = reply_tx.send(std::mem::take(&mut processed_samples));
                 }
-                Cmd::Shutdown => return,
+                Cmd::Shutdown => {
+                    recording = false;
+                    processed_samples.clear();
+                    if let Some(v) = &vad {
+                        v.lock().unwrap().reset();
+                    }
+                    return;
+                }
             }
         }
+    }
+
+    // Channel closed; ensure we leave no buffered audio behind
+    processed_samples.clear();
+    if let Some(v) = &vad {
+        v.lock().unwrap().reset();
     }
 }

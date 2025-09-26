@@ -38,3 +38,9 @@
 - **Theory**: The `tar` crate models hard links as `EntryType::Link`; the `EntryType::HardLink` variant does not exist in the current crate version.
 - **Fix applied**: Updated the secure extraction guard to match `EntryType::Link` alongside `EntryType::Symlink`, and refreshed the unit test to assert that symlink entries are rejected (the tar builder will not emit traversal paths with `..`).
 - **Validation**: `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test model::tests::` complete successfully.
+
+## 6. Cargo Tests Blocked by Network Restrictions (OPEN)
+- **Error**: `cargo test model::tests::` fails while updating git dependencies (`rdev`/`github.com`) with `Temporary failure in name resolution`.
+- **Theory**: The current environment has outbound network access disabled; Cargo cannot refresh git-based crates required for the build.
+- **Recommended solution**: Re-run the test suite once network access is available or pre-populate the git cache (e.g., via vendored dependencies or an internal mirror). Alternatively, set `net.git-fetch-with-cli=true` if a proxy is configured.
+- **Validation**: After restoring network connectivity, execute `cargo test model::tests::` from `src-tauri/` and ensure all five tests pass.
